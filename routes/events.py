@@ -1,11 +1,10 @@
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Depends, Request, status
+from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import select
 
+from auth.authenticate import authenticate_user
 from database.connection import get_session
-from models.models import Event, EventUpdate
-
 from models.models import Event
 
 event_router = APIRouter(tags=['Events'])
@@ -28,7 +27,8 @@ async def get_event(event_id: int, session=Depends(get_session)) -> Event:
 
 
 @event_router.post('/new')
-async def create_event(new_event: Event, session=Depends(get_session)) -> dict:
+async def create_event(new_event: Event, session=Depends(get_session), user: str = Depends(authenticate_user)) -> dict:
+    new_event.creator = user
     session.add(new_event)
     session.commit()
     session.refresh(new_event)
@@ -36,22 +36,24 @@ async def create_event(new_event: Event, session=Depends(get_session)) -> dict:
 
 
 @event_router.put('/{event_id}', response_model=Event)
-async def update_event(event_id: int, new_event: Event, session=Depends(get_session)) -> dict:
+async def update_event(event_id: int, new_event: Event, session=Depends(get_session),
+                       user: str = Depends(authenticate_user)) -> dict:
     event = session.get(Event, event_id)
-    if event:
+    if not event:
+        raise HTTPException(status_code=404, detail='Event not found')
+    if event.creator == user:
         event_data = new_event.dict(exclude_none=True)
         for k, v in event_data.items():
             setattr(event, k, v)
         session.add(event)
         session.commit()
         session.refresh(event)
-
         return event
-    raise HTTPException(status_code=404, detail='Event not found')
+    raise HTTPException(status_code=403, detail='Event not allowed')
 
 
 @event_router.delete('/{id}', response_model=Event)
-async def delete_event(event_id: int, session=Depends(get_session)) -> dict:
+async def delete_event(event_id: int, session=Depends(get_session), user: str = Depends(authenticate_user)) -> dict:
     event = session.get(Event, event_id)
     if event:
         session.delete(event)
